@@ -1,6 +1,5 @@
-Update <resources>
+<resources>
     <string name="app_name">Attack Tehran</string>
     <string name="creator_name">alirahimi</string>
     <string name="creator_credit">Created by alirahimi</string>
 </resources>
-app name and creator
