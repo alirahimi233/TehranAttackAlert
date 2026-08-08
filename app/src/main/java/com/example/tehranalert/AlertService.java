@@ -158,13 +158,28 @@ public class AlertService extends Service {
         }
     }
 
+    // نسخه بازتر و حساس‌تر برای تشخیص حمله
     private boolean isAttackReport(String raw) {
         String text = normalize(raw);
-        boolean tehran = text.contains("تهران") || text.contains("استان تهران");
+
+        // وجود تهران یا اشاره به آن
+        boolean tehran = text.contains("تهران")
+                || text.contains("استان تهران")
+                || text.contains("پایتخت");
+
+        // کلمات حمله / تهدید / انفجار
         boolean attack = containsAny(text,
-                "حمله به", "حمله هوایی", "حمله موشکی", "اصابت موشک", "شلیک موشک",
-                "حمله پهپادی", "اصابت پهپاد", "انفجار در", "آژیر خطر", "پدافند هوایی");
-        boolean denialOnly = containsAny(text, "تکذیب حمله", "خبر حمله کذب", "هیچ حمله‌ای رخ نداده");
+                "حمله", "موشک", "موشکی", "موشکباران",
+                "پهپاد", "پهپادی",
+                "انفجار", "صدای انفجار",
+                "پدافند", "شلیک", "اصابت",
+                "آژیر خطر", "آژیر", "بمباران", "تهدید");
+
+        // تکذیب / شایعه
+        boolean denialOnly = containsAny(text,
+                "تکذیب", "شایعه", "کذب", "رد شد",
+                "بی‌اساس", "نادرست", "هیچ حمله‌ای رخ نداده");
+
         return tehran && attack && !denialOnly;
     }
 
@@ -209,21 +224,28 @@ public class AlertService extends Service {
     }
 
     private synchronized void triggerAlarm(String title, String details) {
-        if (player == null) {
-            player = MediaPlayer.create(this, com.example.tehranalert.R.raw.war_siren);
-            if (player != null) {
-                player.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build());
-                player.setLooping(true);
-                player.start();
-            }
+        // اگر قبلاً پلیر در حال پخش است، آزاد کن
+        if (player != null) {
+            try { player.stop(); } catch (Exception ignored) {}
+            player.release();
+            player = null;
         }
+
+        player = MediaPlayer.create(this, com.example.tehranalert.R.raw.war_siren);
+        if (player != null) {
+            player.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            player.setLooping(true);
+            player.start();
+        }
+
         if (vibrator != null && vibrator.hasVibrator()) {
             long[] pattern = {0, 1000, 350, 1000, 350};
             vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
         }
+
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         if (wakeLock == null || !wakeLock.isHeld()) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TehranAlert:Alarm");
