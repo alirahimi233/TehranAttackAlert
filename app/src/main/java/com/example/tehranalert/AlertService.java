@@ -40,7 +40,7 @@ public class AlertService extends Service {
     private static final String SERVICE_CHANNEL = "monitoring_channel";
     private static final String ALERT_CHANNEL = "critical_alert_channel_v3";
     private static final int SERVICE_NOTIFICATION_ID = 100;
-    private static final long CHECK_INTERVAL_MS = 60_000L; // بررسی هر ۶۰ ثانیه برای سرعت بیشتر
+    private static final long CHECK_INTERVAL_MS = 60_000L;
     private static final int MAX_DOWNLOAD_BYTES = 1_500_000;
 
     private volatile boolean running;
@@ -108,7 +108,6 @@ public class AlertService extends Service {
             fetchLock.acquire(45_000L);
             String html = download(source.url);
             
-            // اگر تلگرام یا ایتا بود از متد مخصوص شبکه‌های اجتماعی استفاده کن
             if (source.url.contains("t.me/") || source.url.contains("eitaa.com/")) {
                 checkSocialPosts(source, html);
             } else {
@@ -165,26 +164,22 @@ public class AlertService extends Service {
     private boolean isAttackReport(String raw) {
         String text = normalize(raw);
 
-        // کلمات هدف (بسیار حساس)
         boolean hasLocation = containsAny(text, "تهران", "پایتخت", "فرودگاه امام", "کرج", "مرکز کشور");
         
         boolean isCritical = containsAny(text, 
-            "آژیر خطر", "حمله موشکی", "شلیک موشک", "انفجار شدید", 
+          "آژیر خطر", "حمله موشکی", "شلیک موشک", "انفجار شدید", 
             "وضعیت قرمز", "بمباران", "پهپاد انتحاری");
 
         boolean isWarning = containsAny(text, 
             "فوری", "خبر فوری", "حمله", "موشک", "پهپاد", "پدافند", "صدای انفجار");
 
-        // اگر آژیر خطر یا حمله موشکی باشد، بدون نام تهران هم آژیر بزن
         if (isCritical) return true;
 
-        // اگر کلمات هشدار معمولی باشد، حتماً باید نام تهران یا پایتخت باشد
-        return tehran && isWarning;
+        return hasLocation && isWarning;
     }
 
     private List<Post> parseSocialPosts(String html) {
         List<Post> result = new ArrayList<>();
-        // الگوی مشترک برای ایتا و تلگرام (بر اساس ساختار وب‌ویو)
         Pattern block = Pattern.compile("data-post=\"[^/]+/(\\d+)\"[\\s\\S]*?(?=<div class=\"[^\"]*message_text)");
         Pattern message = Pattern.compile("class=\"[^\"]*message_text[^\"]*\">([\\s\\S]*?)</div>");
         
@@ -280,7 +275,7 @@ public class AlertService extends Service {
                 .setSmallIcon(com.example.tehranalert.R.drawable.ic_alert)
                 .setContentTitle(title)
                 .setContentText(details)
-                .setFullScreenIntent(null, true) // برای نمایش روی قفل صفحه
+                .setFullScreenIntent(null, true)
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_MAX)
                 .setOngoing(true)
@@ -293,7 +288,7 @@ public class AlertService extends Service {
         manager.createNotificationChannel(new NotificationChannel(SERVICE_CHANNEL, "سرویس پایش", NotificationManager.IMPORTANCE_LOW));
         NotificationChannel alert = new NotificationChannel(ALERT_CHANNEL, "هشدارهای بحرانی", NotificationManager.IMPORTANCE_HIGH);
         alert.enableVibration(true);
-        alert.setBypassDnd(true); // عبور از حالت مزاحم نشوید
+        alert.setBypassDnd(true);
         manager.createNotificationChannel(alert);
     }
 
