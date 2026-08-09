@@ -38,9 +38,9 @@ public class AlertService extends Service {
     public static final String ACTION_STOP_ALARM = "com.example.tehranalert.STOP_ALARM";
 
     private static final String SERVICE_CHANNEL = "monitoring_channel";
-    private static final String ALERT_CHANNEL = "critical_alert_channel_v2";
+    private static final String ALERT_CHANNEL = "critical_alert_channel_v3";
     private static final int SERVICE_NOTIFICATION_ID = 100;
-    private static final long CHECK_INTERVAL_MS = 120_000L;
+    private static final long CHECK_INTERVAL_MS = 60_000L; // بررسی هر ۶۰ ثانیه برای سرعت بیشتر
     private static final int MAX_DOWNLOAD_BYTES = 1_500_000;
 
     private volatile boolean running;
@@ -70,7 +70,7 @@ public class AlertService extends Service {
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("در حال آماده‌سازی پایش..."));
 
         if (ACTION_TEST.equals(action)) {
-            triggerAlarm("آژیر آزمایشی", "تست دستی توسط کاربر");
+            triggerAlarm("آژیر آزمایشی", "تست صدای جنگ توسط کاربر");
         } else if (ACTION_STOP_ALARM.equals(action)) {
             stopAlarm();
         } else {
@@ -86,13 +86,13 @@ public class AlertService extends Service {
         monitorThread = new Thread(() -> {
             while (running && SourceStore.isMonitoring(this)) {
                 List<SourceStore.Source> sources = SourceStore.load(this);
-                int active = 0;
+                int activeCount = 0;
                 for (SourceStore.Source source : sources) {
                     if (!running || !source.enabled) continue;
-                    active++;
+                    activeCount++;
                     checkSource(source);
                 }
-                updateServiceNotification("پایش فعال؛ " + active + " منبع؛ بررسی هر ۲ دقیقه");
+                updateServiceNotification("پایش فعال؛ " + activeCount + " منبع خبری در حال بررسی...");
                 sleepInterruptibly(CHECK_INTERVAL_MS);
             }
             running = false;
@@ -105,24 +105,26 @@ public class AlertService extends Service {
         try {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             fetchLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TehranAlert:Fetch");
-            fetchLock.acquire(30_000L);
+            fetchLock.acquire(45_000L);
             String html = download(source.url);
-            if (source.url.contains("t.me/")) {
-                checkTelegram(source, html);
+            
+            // اگر تلگرام یا ایتا بود از متد مخصوص شبکه‌های اجتماعی استفاده کن
+            if (source.url.contains("t.me/") || source.url.contains("eitaa.com/")) {
+                checkSocialPosts(source, html);
             } else {
                 checkWebPage(source, html);
             }
         } catch (Exception ignored) {
-            updateServiceNotification("خطا در دسترسی به " + source.name + "؛ تلاش مجدد انجام می‌شود");
         } finally {
             if (fetchLock != null && fetchLock.isHeld()) fetchLock.release();
         }
     }
 
-    private void checkTelegram(SourceStore.Source source, String html) {
-        List<Post> posts = parseTelegramPosts(html);
+    private void checkSocialPosts(SourceStore.Source source, String html) {
+        List<Post> posts = parseSocialPosts(html);
         if (posts.isEmpty()) return;
         Collections.sort(posts, Comparator.comparingLong(p -> p.id));
+        
         String key = "last_post_" + sha256(source.url);
         long lastSeen = SourceStore.prefs(this).getLong(key, -1L);
         long newest = posts.get(posts.size() - 1).id;
@@ -134,7 +136,7 @@ public class AlertService extends Service {
 
         for (Post post : posts) {
             if (post.id > lastSeen && isAttackReport(post.text)) {
-                triggerAlarm("هشدار حمله به تهران", source.name + ": " + shorten(post.text));
+                triggerAlarm("⚠️ هشدار جدی حمله ⚠️", source.name + ": " + shorten(post.text));
                 break;
             }
         }
@@ -146,76 +148,73 @@ public class AlertService extends Service {
         String key = "page_hash_" + sha256(source.url);
         String oldHash = SourceStore.prefs(this).getString(key, "");
         String newHash = sha256(text);
+        
         if (oldHash.isEmpty()) {
             SourceStore.prefs(this).edit().putString(key, newHash).apply();
             return;
         }
+        
         if (!newHash.equals(oldHash)) {
             SourceStore.prefs(this).edit().putString(key, newHash).apply();
             if (isAttackReport(text)) {
-                triggerAlarm("هشدار حمله به تهران", "خبر جدید در " + source.name);
+                triggerAlarm("هشدار خبر فوری", "تغییرات مهم در منبع: " + source.name);
             }
         }
     }
 
-    // نسخه بازتر و حساس‌تر برای تشخیص حمله
     private boolean isAttackReport(String raw) {
         String text = normalize(raw);
 
-        // وجود تهران یا اشاره به آن
-        boolean tehran = text.contains("تهران")
-                || text.contains("استان تهران")
-                || text.contains("پایتخت");
+        // کلمات هدف (بسیار حساس)
+        boolean hasLocation = containsAny(text, "تهران", "پایتخت", "فرودگاه امام", "کرج", "مرکز کشور");
+        
+        boolean isCritical = containsAny(text, 
+            "آژیر خطر", "حمله موشکی", "شلیک موشک", "انفجار شدید", 
+            "وضعیت قرمز", "بمباران", "پهپاد انتحاری");
 
-        // کلمات حمله / تهدید / انفجار
-        boolean attack = containsAny(text,
-                "حمله", "موشک", "موشکی", "موشکباران",
-                "پهپاد", "پهپادی",
-                "انفجار", "صدای انفجار",
-                "پدافند", "شلیک", "اصابت",
-                "آژیر خطر", "آژیر", "بمباران", "تهدید");
+        boolean isWarning = containsAny(text, 
+            "فوری", "خبر فوری", "حمله", "موشک", "پهپاد", "پدافند", "صدای انفجار");
 
-        // تکذیب / شایعه
-        boolean denialOnly = containsAny(text,
-                "تکذیب", "شایعه", "کذب", "رد شد",
-                "بی‌اساس", "نادرست", "هیچ حمله‌ای رخ نداده");
+        // اگر آژیر خطر یا حمله موشکی باشد، بدون نام تهران هم آژیر بزن
+        if (isCritical) return true;
 
-        return tehran && attack && !denialOnly;
+        // اگر کلمات هشدار معمولی باشد، حتماً باید نام تهران یا پایتخت باشد
+        return tehran && isWarning;
     }
 
-    private List<Post> parseTelegramPosts(String html) {
+    private List<Post> parseSocialPosts(String html) {
         List<Post> result = new ArrayList<>();
-        Pattern block = Pattern.compile("<div class=\\\"tgme_widget_message[^>]*data-post=\\\"[^/]+/(\\d+)\\\"[\\s\\S]*?(?=<div class=\\\"tgme_widget_message_wrap|</section>)");
-        Pattern message = Pattern.compile("<div class=\\\"tgme_widget_message_text[^>]*>([\\s\\S]*?)</div>");
+        // الگوی مشترک برای ایتا و تلگرام (بر اساس ساختار وب‌ویو)
+        Pattern block = Pattern.compile("data-post=\"[^/]+/(\\d+)\"[\\s\\S]*?(?=<div class=\"[^\"]*message_text)");
+        Pattern message = Pattern.compile("class=\"[^\"]*message_text[^\"]*\">([\\s\\S]*?)</div>");
+        
         Matcher blocks = block.matcher(html);
         while (blocks.find()) {
             long id;
             try { id = Long.parseLong(blocks.group(1)); } catch (Exception e) { continue; }
-            Matcher body = message.matcher(blocks.group());
-            if (body.find()) result.add(new Post(id, stripHtml(body.group(1))));
+            String content = "";
+            Matcher body = message.matcher(html.substring(blocks.start()));
+            if (body.find()) content = stripHtml(body.group(1));
+            result.add(new Post(id, content));
         }
         return result;
     }
 
     private String download(String address) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
-        connection.setConnectTimeout(12_000);
-        connection.setReadTimeout(15_000);
-        connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) TehranAttackAlert/2.0");
-        connection.setRequestProperty("Accept-Language", "fa,en;q=0.8");
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(20_000);
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         int status = connection.getResponseCode();
-        if (status < 200 || status >= 400) throw new Exception("HTTP " + status);
+        if (status != 200) throw new Exception("Error " + status);
         try (InputStream input = connection.getInputStream();
              BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
             StringBuilder out = new StringBuilder();
             char[] buffer = new char[8192];
-            int total = 0;
-            int read;
+            int read, total = 0;
             while ((read = reader.read(buffer)) != -1 && total < MAX_DOWNLOAD_BYTES) {
-                int accepted = Math.min(read, MAX_DOWNLOAD_BYTES - total);
-                out.append(buffer, 0, accepted);
-                total += accepted;
+                out.append(buffer, 0, read);
+                total += read;
             }
             return out.toString();
         } finally {
@@ -224,11 +223,9 @@ public class AlertService extends Service {
     }
 
     private synchronized void triggerAlarm(String title, String details) {
-        // اگر قبلاً پلیر در حال پخش است، آزاد کن
         if (player != null) {
             try { player.stop(); } catch (Exception ignored) {}
             player.release();
-            player = null;
         }
 
         player = MediaPlayer.create(this, com.example.tehranalert.R.raw.war_siren);
@@ -241,16 +238,15 @@ public class AlertService extends Service {
             player.start();
         }
 
-        if (vibrator != null && vibrator.hasVibrator()) {
-            long[] pattern = {0, 1000, 350, 1000, 350};
+        if (vibrator != null) {
+            long[] pattern = {0, 1500, 500, 1500, 500};
             vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
         }
 
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        if (wakeLock == null || !wakeLock.isHeld()) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TehranAlert:Alarm");
-            wakeLock.acquire(10 * 60_000L);
-        }
+        if (wakeLock == null) wakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "TehranAlert:AlarmScreen");
+        if (!wakeLock.isHeld()) wakeLock.acquire(5 * 60_000L);
+
         getSystemService(NotificationManager.class).notify(200, alertNotification(title, details));
     }
 
@@ -267,11 +263,10 @@ public class AlertService extends Service {
 
     private Notification serviceNotification(String text) {
         Intent open = new Intent(this, MainActivity.class);
-        PendingIntent pending = PendingIntent.getActivity(this, 1, open,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent pending = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, SERVICE_CHANNEL)
                 .setSmallIcon(com.example.tehranalert.R.drawable.ic_alert)
-                .setContentTitle("سامانه هشدار تهران")
+                .setContentTitle("Attack Tehran")
                 .setContentText(text)
                 .setContentIntent(pending)
                 .setOngoing(true)
@@ -280,33 +275,25 @@ public class AlertService extends Service {
 
     private Notification alertNotification(String title, String details) {
         Intent stop = new Intent(this, AlertService.class).setAction(ACTION_STOP_ALARM);
-        PendingIntent stopPending = PendingIntent.getService(this, 2, stop,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent stopPending = PendingIntent.getService(this, 2, stop, PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, ALERT_CHANNEL)
                 .setSmallIcon(com.example.tehranalert.R.drawable.ic_alert)
                 .setContentTitle(title)
                 .setContentText(details)
-                .setStyle(new Notification.BigTextStyle().bigText(details))
+                .setFullScreenIntent(null, true) // برای نمایش روی قفل صفحه
                 .setCategory(Notification.CATEGORY_ALARM)
-                .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setPriority(Notification.PRIORITY_MAX)
                 .setOngoing(true)
-                .addAction(new Notification.Action.Builder(null, "توقف آژیر", stopPending).build())
+                .addAction(new Notification.Action.Builder(null, "خاموش کردن آژیر", stopPending).build())
                 .build();
     }
 
     private void createChannels() {
         NotificationManager manager = getSystemService(NotificationManager.class);
-        NotificationChannel monitoring = new NotificationChannel(
-                SERVICE_CHANNEL, "پایش منابع", NotificationManager.IMPORTANCE_LOW);
-        monitoring.setDescription("نمایش وضعیت سرویس پایش منابع خبری");
-        manager.createNotificationChannel(monitoring);
-
-        NotificationChannel alert = new NotificationChannel(
-                ALERT_CHANNEL, "هشدار بحرانی", NotificationManager.IMPORTANCE_HIGH);
-        alert.setDescription("هشدار حمله تشخیص‌داده‌شده");
+        manager.createNotificationChannel(new NotificationChannel(SERVICE_CHANNEL, "سرویس پایش", NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel alert = new NotificationChannel(ALERT_CHANNEL, "هشدارهای بحرانی", NotificationManager.IMPORTANCE_HIGH);
         alert.enableVibration(true);
-        alert.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        alert.setBypassDnd(true); // عبور از حالت مزاحم نشوید
         manager.createNotificationChannel(alert);
     }
 
@@ -315,7 +302,7 @@ public class AlertService extends Service {
     }
 
     private void sleepInterruptibly(long millis) {
-        try { Thread.sleep(millis); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        try { Thread.sleep(millis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     private boolean containsAny(String value, String... terms) {
@@ -324,48 +311,27 @@ public class AlertService extends Service {
     }
 
     private String stripHtml(String html) {
-        String withBreaks = html.replaceAll("(?i)<br\\s*/?>", "\\n");
-        return Html.fromHtml(withBreaks, Html.FROM_HTML_MODE_LEGACY).toString();
+        return Html.fromHtml(html.replaceAll("(?i)<br\\s*/?>", "\n"), Html.FROM_HTML_MODE_LEGACY).toString();
     }
 
     private String normalize(String value) {
-        return value.toLowerCase(new Locale("fa"))
-                .replace('ي', 'ی').replace('ك', 'ک')
-                .replaceAll("[\\u200c\\s]+", " ").trim();
+        return value.toLowerCase(new Locale("fa")).replace('ي', 'ی').replace('ك', 'ک').replaceAll("[\\u200c\\s]+", " ").trim();
     }
 
     private String shorten(String value) {
-        String normalized = normalize(value);
-        return normalized.length() <= 180 ? normalized : normalized.substring(0, 180) + "…";
+        return value.length() <= 150 ? value : value.substring(0, 150) + "...";
     }
 
     private String sha256(String value) {
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
             StringBuilder out = new StringBuilder();
-            for (byte b : hash) out.append(String.format(Locale.US, "%02x", b));
+            for (byte b : hash) out.append(String.format("%02x", b));
             return out.toString();
-        } catch (Exception e) {
-            return Integer.toHexString(value.hashCode());
-        }
+        } catch (Exception e) { return String.valueOf(value.hashCode()); }
     }
 
-    @Override
-    public void onDestroy() {
-        running = false;
-        if (monitorThread != null) monitorThread.interrupt();
-        stopAlarm();
-        super.onDestroy();
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
-    }
-
-    private static final class Post {
-        final long id;
-        final String text;
-        Post(long id, String text) { this.id = id; this.text = text; }
-    }
+    @Override public void onDestroy() { running = false; stopAlarm(); super.onDestroy(); }
+    @Override public IBinder onBind(Intent intent) { return null; }
+    private static final class Post { final long id; final String text; Post(long id, String text) { this.id = id; this.text = text; } }
 }
