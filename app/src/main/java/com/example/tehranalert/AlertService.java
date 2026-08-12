@@ -1,4 +1,5 @@
- package com.example.tehranalert;
+```java
+package com.example.tehranalert;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -80,7 +81,6 @@ public class AlertService extends Service {
 
     @Override
     public void onCreate() {
-
         super.onCreate();
 
         createChannels();
@@ -121,9 +121,13 @@ public class AlertService extends Service {
 
             running = false;
 
-            stopForeground(
-                    STOP_FOREGROUND_REMOVE
-            );
+            if (Build.VERSION.SDK_INT >= 24) {
+                stopForeground(
+                        STOP_FOREGROUND_REMOVE
+                );
+            } else {
+                stopForeground(true);
+            }
 
             stopSelf();
 
@@ -131,7 +135,11 @@ public class AlertService extends Service {
         }
 
 
-        // سرویس باید قبل از کارهای دیگر foreground شود
+        /*
+         * سرویس باید قبل از انجام عملیات
+         * به Foreground Service تبدیل شود.
+         */
+
         startForeground(
                 SERVICE_NOTIFICATION_ID,
                 serviceNotification(
@@ -140,7 +148,10 @@ public class AlertService extends Service {
         );
 
 
-        // تست آژیر
+        // =====================================================
+        // آژیر آزمایشی
+        // =====================================================
+
         if (ACTION_TEST.equals(action)) {
 
             triggerAlarm(
@@ -152,7 +163,10 @@ public class AlertService extends Service {
         }
 
 
+        // =====================================================
         // توقف آژیر
+        // =====================================================
+
         if (ACTION_STOP_ALARM.equals(action)) {
 
             stopAlarm();
@@ -161,7 +175,10 @@ public class AlertService extends Service {
         }
 
 
+        // =====================================================
         // شروع پایش
+        // =====================================================
+
         SourceStore.setMonitoring(
                 this,
                 true
@@ -265,7 +282,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // بررسی یک منبع
+    // بررسی منبع
     // =========================================================
 
     private void checkSource(
@@ -293,19 +310,26 @@ public class AlertService extends Service {
 
             Log.d(
                     TAG,
-                    "Checking: " + source.name +
-                            " -> " + source.url
+                    "Checking: " +
+                            source.name +
+                            " -> " +
+                            source.url
             );
 
+
+            /*
+             * این متد در نسخه قبلی جا افتاده بود.
+             * اکنون داخل همین فایل وجود دارد.
+             */
 
             String html =
                     download(source.url);
 
 
             if (
-                    source.url.contains(
-                            "eitaa.com/"
-                    )
+                    source.url
+                            .toLowerCase(Locale.ROOT)
+                            .contains("eitaa.com/")
             ) {
 
                 Log.d(
@@ -319,9 +343,9 @@ public class AlertService extends Service {
                 );
 
             } else if (
-                    source.url.contains(
-                            "t.me/"
-                    )
+                    source.url
+                            .toLowerCase(Locale.ROOT)
+                            .contains("t.me/")
             ) {
 
                 Log.d(
@@ -365,6 +389,154 @@ public class AlertService extends Service {
             ) {
 
                 fetchLock.release();
+            }
+        }
+    }
+
+
+    // =========================================================
+    // دانلود صفحه اینترنتی
+    // =========================================================
+
+    private String download(
+            String urlString
+    ) throws Exception {
+
+        HttpURLConnection connection = null;
+
+        try {
+
+            URL url =
+                    new URL(urlString);
+
+            connection =
+                    (HttpURLConnection)
+                            url.openConnection();
+
+            connection.setRequestMethod("GET");
+
+            connection.setConnectTimeout(
+                    15_000
+            );
+
+            connection.setReadTimeout(
+                    20_000
+            );
+
+            connection.setInstanceFollowRedirects(
+                    true
+            );
+
+            connection.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Android) TehranAttackAlert/1.0"
+            );
+
+            connection.setRequestProperty(
+                    "Accept",
+                    "text/html,application/xhtml+xml"
+            );
+
+
+            int responseCode =
+                    connection.getResponseCode();
+
+
+            Log.d(
+                    TAG,
+                    "HTTP " +
+                            responseCode +
+                            " -> " +
+                            urlString
+            );
+
+
+            if (
+                    responseCode < 200 ||
+                    responseCode >= 400
+            ) {
+
+                throw new Exception(
+                        "HTTP error: " +
+                                responseCode
+                );
+            }
+
+
+            InputStream input =
+                    connection.getInputStream();
+
+
+            BufferedReader reader =
+                    new BufferedReader(
+                            new InputStreamReader(
+                                    input,
+                                    StandardCharsets.UTF_8
+                            )
+                    );
+
+
+            StringBuilder result =
+                    new StringBuilder();
+
+
+            String line;
+
+            int totalBytes = 0;
+
+
+            while (
+                    (line = reader.readLine()) != null
+            ) {
+
+                totalBytes +=
+                        line.getBytes(
+                                StandardCharsets.UTF_8
+                        ).length;
+
+
+                if (
+                        totalBytes >
+                                MAX_DOWNLOAD_BYTES
+                ) {
+
+                    Log.w(
+                            TAG,
+                            "Download size limit reached"
+                    );
+
+                    break;
+                }
+
+
+                result.append(line);
+
+                result.append('\n');
+            }
+
+
+            reader.close();
+
+
+            String html =
+                    result.toString();
+
+
+            Log.d(
+                    TAG,
+                    "Downloaded bytes: " +
+                            totalBytes
+            );
+
+
+            return html;
+
+
+        } finally {
+
+            if (connection != null) {
+
+                connection.disconnect();
             }
         }
     }
@@ -430,9 +602,8 @@ public class AlertService extends Service {
 
 
         /*
-         * اولین اجرای منبع:
-         *
-         * خبرهای موجود قبلی را هشدار نمی‌دهیم.
+         * اولین بررسی:
+         * پست‌های قبلی را هشدار نمی‌دهیم.
          */
 
         if (lastSeen < 0) {
@@ -446,6 +617,7 @@ public class AlertService extends Service {
                     )
                     .apply();
 
+
             Log.d(
                     TAG,
                     "Eitaa first scan. " +
@@ -457,9 +629,7 @@ public class AlertService extends Service {
         }
 
 
-        /*
-         * پست‌های جدید
-         */
+        // بررسی پست‌های جدید
 
         for (Post post : posts) {
 
@@ -510,7 +680,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // parser مخصوص Eitaa
+    // Parser Eitaa
     // =========================================================
 
     private List<Post> parseEitaaPosts(
@@ -522,144 +692,140 @@ public class AlertService extends Service {
 
 
         /*
-         * Eitaa در صفحه عمومی ممکن است
-         * ساختارهای مختلف HTML داشته باشد.
-         *
-         * ابتدا زمان/شناسه‌های پست را
-         * پیدا می‌کنیم و متن اطراف آن را
-         * استخراج می‌کنیم.
+         * الگوهای مختلفی که ممکن است
+         * در HTML صفحه Eitaa وجود داشته باشند.
          */
 
+        String[] patterns = {
 
-        Pattern messagePattern =
-                Pattern.compile(
-                        "(?is)" +
-                        "(?:message|post)[^>]*" +
-                        "[^>]*>" +
-                        "(.*?)" +
-                        "(?=</(?:div|article)|$)"
-                );
+                "(?is)class=[\"'][^\"']*(?:message|post)[^\"']*[\"'][^>]*>(.*?)</div>",
 
+                "(?is)data-id=[\"'](\\d+)[\"'][^>]*>(.*?)</",
 
-        Matcher matcher =
-                messagePattern.matcher(html);
+                "(?is)data-message-id=[\"'](\\d+)[\"'][^>]*>(.*?)</",
+
+                "(?is)data-post-id=[\"'](\\d+)[\"'][^>]*>(.*?)</"
+        };
 
 
         long generatedId = 1;
 
 
-        while (matcher.find()) {
+        for (String regex : patterns) {
 
-            String block =
-                    matcher.group(1);
+            try {
 
+                Pattern pattern =
+                        Pattern.compile(regex);
 
-            if (block == null) {
-                continue;
-            }
-
-
-            String text =
-                    normalize(
-                            stripHtml(block)
-                    );
+                Matcher matcher =
+                        pattern.matcher(html);
 
 
-            if (
-                    text.length() < 2
-            ) {
-                continue;
-            }
+                while (matcher.find()) {
 
-
-            /*
-             * فقط متن‌هایی که شبیه
-             * پیام هستند نگه می‌داریم.
-             */
-
-            if (
-                    text.contains("دنبال‌کننده") ||
-                    text.contains("مشاهده در ایتا") ||
-                    text.contains("چندسکویی")
-            ) {
-                continue;
-            }
-
-
-            String idText =
-                    extractEitaaId(
-                            matcher.group(0)
-                    );
-
-
-            long id;
-
-
-            if (
-                    idText != null &&
-                    !idText.isEmpty()
-            ) {
-
-                try {
-
-                    id =
-                            Long.parseLong(
-                                    idText
+                    String block =
+                            matcher.group(
+                                    matcher.groupCount()
                             );
 
-                } catch (Exception e) {
 
-                    id = generatedId++;
+                    if (block == null) {
+                        continue;
+                    }
+
+
+                    String text =
+                            normalize(
+                                    stripHtml(block)
+                            );
+
+
+                    if (
+                            text.length() < 2
+                    ) {
+                        continue;
+                    }
+
+
+                    long id =
+                            Math.abs(
+                                    sha256(text)
+                                            .hashCode()
+                            );
+
+
+                    if (id == 0) {
+                        id = generatedId++;
+                    }
+
+
+                    result.add(
+                            new Post(
+                                    id,
+                                    text
+                            )
+                    );
                 }
 
-            } else {
+            } catch (Exception e) {
 
-                /*
-                 * اگر شناسه در HTML نبود،
-                 * از hash متن برای ID استفاده می‌کنیم.
-                 */
-
-                id =
-                        Math.abs(
-                                sha256(text)
-                                        .hashCode()
-                        );
-
-                if (id == 0) {
-                    id = generatedId++;
-                }
+                Log.e(
+                        TAG,
+                        "Eitaa regex error",
+                        e
+                );
             }
-
-
-            result.add(
-                    new Post(
-                            id,
-                            text
-                    )
-            );
         }
 
 
         /*
-         * اگر parser بالا چیزی پیدا نکرد،
-         * fallback مخصوص صفحه عمومی Eitaa
+         * حذف موارد تکراری
          */
 
-        if (result.isEmpty()) {
+        List<Post> unique =
+                new ArrayList<>();
 
-            result =
+
+        List<String> seen =
+                new ArrayList<>();
+
+
+        for (Post post : result) {
+
+            if (
+                    !seen.contains(
+                            post.text
+                    )
+            ) {
+
+                seen.add(post.text);
+
+                unique.add(post);
+            }
+        }
+
+
+        /*
+         * اگر HTML ساختار متفاوتی داشت،
+         * fallback را اجرا می‌کنیم.
+         */
+
+        if (unique.isEmpty()) {
+
+            unique =
                     parseEitaaFallback(
                             html
                     );
         }
 
 
-        return result;
+        return unique;
     }
 
 
     // =========================================================
-    // استخراج ID احتمالی Eitaa
+    // استخراج ID Eitaa
     // =========================================================
 
     private String extractEitaaId(
@@ -669,9 +835,13 @@ public class AlertService extends Service {
         String[] patterns = {
 
                 "data-id=[\"'](\\d+)",
+
                 "data-message-id=[\"'](\\d+)",
+
                 "data-post-id=[\"'](\\d+)",
+
                 "/(\\d+)[\"']",
+
                 "message[_-]?(\\d+)"
         };
 
@@ -700,7 +870,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // fallback Eitaa
+    // Fallback Eitaa
     // =========================================================
 
     private List<Post> parseEitaaFallback(
@@ -716,13 +886,6 @@ public class AlertService extends Service {
                         stripHtml(html)
                 );
 
-
-        /*
-         * این fallback مخصوص وقتی است که
-         * ساختار DOM پست‌ها تغییر کرده باشد.
-         *
-         * متن صفحه را به خطوط جدا می‌کنیم.
-         */
 
         String[] lines =
                 plain.split("\\n+");
@@ -750,14 +913,10 @@ public class AlertService extends Service {
                     text.contains("پرسش‌ها") ||
                     text.contains("قوانین")
             ) {
+
                 continue;
             }
 
-
-            /*
-             * فقط متن‌هایی که احتمالاً
-             * محتوای خبری هستند.
-             */
 
             if (
                     text.contains("تهران") ||
@@ -765,6 +924,7 @@ public class AlertService extends Service {
                     text.contains("حمله") ||
                     text.contains("موشک") ||
                     text.contains("انفجار") ||
+                    text.contains("پهپاد") ||
                     text.contains("ایران")
             ) {
 
@@ -877,7 +1037,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // parser Telegram
+    // Parser Telegram
     // =========================================================
 
     private List<Post> parseTelegramPosts(
@@ -956,7 +1116,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // سایت های خبری
+    // سایت‌های خبری
     // =========================================================
 
     private void checkWebPage(
@@ -1050,7 +1210,6 @@ public class AlertService extends Service {
                         "پایتخت",
                         "فرودگاه امام",
                         "فرودگاه امام خمینی",
-                        "کرج",
                         "مرکز تهران"
                 );
 
@@ -1089,27 +1248,17 @@ public class AlertService extends Service {
                 );
 
 
-        /*
-         * اگر عبارت بسیار واضح باشد،
-         * هشدار بده.
-         */
-
         if (strong) {
             return true;
         }
 
-
-        /*
-         * برای سایر موارد باید هم تهران
-         * و هم نشانه حمله وجود داشته باشد.
-         */
 
         return hasTehran && hasAttack;
     }
 
 
     // =========================================================
-    // آژیر
+    // فعال کردن آژیر
     // =========================================================
 
     private synchronized void triggerAlarm(
@@ -1126,7 +1275,6 @@ public class AlertService extends Service {
         );
 
 
-        // اگر آژیر قبلی در حال اجراست
         if (player != null) {
 
             try {
@@ -1166,10 +1314,16 @@ public class AlertService extends Service {
             player.setLooping(true);
 
             player.start();
+
+        } else {
+
+            Log.e(
+                    TAG,
+                    "war_siren.wav could not be loaded"
+            );
         }
 
 
-        // ویبره
         if (vibrator != null) {
 
             long[] pattern = {
@@ -1201,6 +1355,7 @@ public class AlertService extends Service {
 
 
         // روشن کردن صفحه
+
         try {
 
             PowerManager pm =
@@ -1302,7 +1457,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // اعلان سرویس
+    // Notification سرویس
     // =========================================================
 
     private Notification serviceNotification(
@@ -1343,7 +1498,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // اعلان هشدار
+    // Notification هشدار
     // =========================================================
 
     private Notification alertNotification(
@@ -1443,7 +1598,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // بروزرسانی اعلان سرویس
+    // بروزرسانی Notification سرویس
     // =========================================================
 
     private void updateServiceNotification(
@@ -1479,7 +1634,7 @@ public class AlertService extends Service {
 
 
     // =========================================================
-    // جستجوی کلمات
+    // بررسی کلمات
     // =========================================================
 
     private boolean containsAny(
@@ -1517,13 +1672,26 @@ public class AlertService extends Service {
         }
 
 
-        return Html.fromHtml(
+        String replaced =
                 html.replaceAll(
                         "(?i)<br\\s*/?>",
                         "\n"
-                ),
-                Html.FROM_HTML_MODE_LEGACY
-        ).toString();
+                );
+
+
+        if (Build.VERSION.SDK_INT >= 24) {
+
+            return Html.fromHtml(
+                    replaced,
+                    Html.FROM_HTML_MODE_LEGACY
+            ).toString();
+
+        } else {
+
+            return Html.fromHtml(
+                    replaced
+            ).toString();
+        }
     }
 
 
@@ -1583,7 +1751,10 @@ public class AlertService extends Service {
 
         return value.length() <= 150
                 ? value
-                : value.substring(0, 150) + "...";
+                : value.substring(
+                        0,
+                        150
+                ) + "...";
     }
 
 
@@ -1680,4 +1851,5 @@ public class AlertService extends Service {
             this.text = text;
         }
     }
-}       
+}
+```
